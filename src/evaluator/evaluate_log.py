@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 from collections import defaultdict, OrderedDict
 from typing import IO
+from datetime import datetime, timezone
 
 class LogEvaluator:
   def __init__(self, log_file: str, mode_key: str = "spring_mode", base_log_dir: str | None = None, encoding: str = "utf-8", errors: str = "replace"):
@@ -19,16 +20,46 @@ class LogEvaluator:
       return "unknown"
 
     name = re.sub(r'[^A-Za-z0-9._-]+', "_", name)
-    reserved = {"CON","PRN","AUX","NUL","COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9","LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"}
 
-    if name.upper() in reserved:
-      name = f"_{name}_"
     return name
 
   def _fix_json_line(self, line: str) -> str:
     return re.sub(r',\s*}$', '}', line)
 
-  def classify_by_mode(self, out_file_name: str = "access.log", max_open_files: int = 64) -> dict[str, int]:
+  def _parse_obj_time(self, obj: dict) -> datetime | None:
+    t = obj.get("time_iso8601")
+    if isinstance(t, str) and t:
+      s = t.strip()
+      if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+      try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+          dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+      except Exception:
+        pass
+
+    t = obj.get("time_local")
+
+    if isinstance(t, str) and t:
+      try:
+        dt = datetime.strptime(t, "%d/%b/%Y:%H:%M:%S %z")
+        return dt.astimezone(timezone.utc)
+      except Exception:
+        pass
+
+    t = obj.get("msec")
+
+    if isinstance(t, str) and t:
+      try:
+        return datetime.fromtimestamp(float(t), tz=timezone.utc)
+      except Exception:
+        pass
+
+    return None
+
+  def classify_by_mode(self, out_file_name: str = "access.log", start: datetime | None = None, end: datetime | None = None, max_open_files: int = 64) -> dict[str, int]:
     counts: dict[str, int] = defaultdict(int)
 
     writers: "OrderedDict[str, IO]" = OrderedDict()
@@ -71,6 +102,16 @@ class LogEvaluator:
             obj = json.loads(line)
           except json.JSONDecodeError:
             continue
+
+          # Period filter (inclusive). Skip lines without timestamp when a range is set.
+          ts = self._parse_obj_time(obj)
+          if start or end:
+            if ts is None:
+              continue
+            if start and ts < start:
+              continue
+            if end and ts > end:
+              continue
 
           mode_value = obj.get(self.mode_key, "")
           if not mode_value:
