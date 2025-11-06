@@ -44,6 +44,9 @@ def main():
     days = set()
     for m in counts:
       days.update(counts[m].keys())
+
+    totals_by_mode: dict[str, int] = {}
+
     for day in sorted(days):
       print(day)
 
@@ -52,11 +55,17 @@ def main():
         c = counts[m].get(day, 0)
         if c > 0:
           modes_today.append((m, c))
+          totals_by_mode[m] = totals_by_mode.get(m, 0) + c
+
       total = sum(c for _, c in modes_today)
       for m, c in modes_today:
         print(f"{m}: {c}")
       print(f"sum: {total}")
       print("")
+
+    print("--sum--")
+    for m in sorted(totals_by_mode.keys(), key=_mode_sort_key):
+      print(f"{m}: {totals_by_mode[m]}")
 
   else:
     counts = evaluator.classify_by_mode(
