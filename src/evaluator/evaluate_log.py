@@ -1,6 +1,6 @@
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from collections import defaultdict, OrderedDict
 from typing import IO
 from datetime import datetime, timezone
@@ -15,16 +15,24 @@ class LogEvaluator:
 
   def _sanitize_mode(self, value) -> str:
     name = str(value).strip() if value is not None else ""
-
     if not name:
       return "unknown"
-
     name = re.sub(r'[^A-Za-z0-9._-]+', "_", name)
-
     return name
 
   def _fix_json_line(self, line: str) -> str:
+
     return re.sub(r',\s*}$', '}', line)
+
+  def _extract_uri_from_request_data(self, data: str | None) -> str | None:
+    if not data:
+      return None
+    first = str(data).splitlines()[0].strip()
+
+    m = re.match(r'^(GET|POST|HEAD|PUT|DELETE|OPTIONS|TRACE|CONNECT)\s+(\S+)(?:\s+HTTP/\d(?:\.\d)?)?$', first, re.IGNORECASE)
+    if m:
+      return m.group(2)
+    return None
 
   def _parse_obj_time(self, obj: dict) -> datetime | None:
     t = obj.get("time_iso8601")
@@ -41,7 +49,6 @@ class LogEvaluator:
         pass
 
     t = obj.get("time_local")
-
     if isinstance(t, str) and t:
       try:
         dt = datetime.strptime(t, "%d/%b/%Y:%H:%M:%S %z")
@@ -50,7 +57,6 @@ class LogEvaluator:
         pass
 
     t = obj.get("msec")
-
     if isinstance(t, str) and t:
       try:
         return datetime.fromtimestamp(float(t), tz=timezone.utc)
@@ -59,8 +65,27 @@ class LogEvaluator:
 
     return None
 
-  def classify_by_mode(self, out_file_name: str = "access.log", start: datetime | None = None, end: datetime | None = None, max_open_files: int = 64) -> dict[str, int]:
-    counts: dict[str, int] = defaultdict(int)
+  def classify_by_mode(
+      self,
+      out_file_name: str = "access.log",
+      start: datetime | None = None,
+      end: datetime | None = None,
+      max_open_files: int = 64,
+      count_policy: str = "uri",
+      bucket: str = "none",
+      bucket_tz = None
+    ):
+    if count_policy not in ("uri", "all"):
+      raise ValueError("count_policy must be 'uri' or 'all'")
+    if bucket not in ("none", "day"):
+      raise ValueError("bucket must be 'none' or 'day'")
+    if bucket_tz is None:
+      bucket_tz = timezone.utc
+
+    if bucket == "day":
+      counts = defaultdict(lambda: defaultdict(int))
+    else:
+      counts = defaultdict(int)
 
     writers: "OrderedDict[str, IO]" = OrderedDict()
     initialized_modes: set[str] = set()
@@ -82,7 +107,6 @@ class LogEvaluator:
       writers[mode] = fh
       if max_open_files and len(writers) > max_open_files:
         evict_mode, evict_fh = writers.popitem(last=False)
-
         try:
           evict_fh.close()
         except Exception:
@@ -103,7 +127,6 @@ class LogEvaluator:
           except json.JSONDecodeError:
             continue
 
-          # Period filter (inclusive). Skip lines without timestamp when a range is set.
           ts = self._parse_obj_time(obj)
           if start or end:
             if ts is None:
@@ -115,6 +138,7 @@ class LogEvaluator:
 
           mode_value = obj.get(self.mode_key, "")
           if not mode_value:
+
             proxy_host = str(obj.get("proxy_host", ""))
             if "launcher" in proxy_host:
               mode_value = "launcher"
@@ -125,7 +149,24 @@ class LogEvaluator:
           fh.write(line)
           fh.write("\n")
 
-          if obj.get("request_uri"):
+          should_count = False
+          if count_policy == "all":
+            should_count = True
+          else:
+            uri = obj.get("request_uri") or self._extract_uri_from_request_data(obj.get("request_data"))
+            if uri:
+              should_count = True
+
+          if not should_count:
+            continue
+
+          if bucket == "day":
+            if ts is not None:
+              day_key = ts.astimezone(bucket_tz).strftime("%Y-%m-%d")
+            else:
+              day_key = "unknown-date"
+            counts[mode][day_key] += 1
+          else:
             counts[mode] += 1
 
     finally:
@@ -135,4 +176,6 @@ class LogEvaluator:
         except Exception:
           pass
 
+    if bucket == "day":
+      return { m: dict(dmap) for m, dmap in counts.items() }
     return dict(counts)

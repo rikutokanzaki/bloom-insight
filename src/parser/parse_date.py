@@ -3,16 +3,22 @@ import re
 import argparse
 
 def parse_tz(tz_str: str | None):
-  if not tz_str or tz_str.upper() == "UTC" or tz_str == "Z":
+  if not tz_str:
     return timezone.utc
 
-  if tz_str.lower() == "local":
+  tz = tz_str.strip()
+
+  if tz.upper() in ("UTC", "Z"):
+    return timezone.utc
+
+  if tz.lower() == "local":
     now = datetime.now().astimezone()
     return timezone(now.utcoffset() or timedelta(0))
 
-  s = tz_str.strip()
-  m = re.fullmatch(r'([+-])(\d{2})(?::?(\d{2}))?', s)
+  if tz.upper() in ("JST", "ASIA/TOKYO"):
+    return timezone(timedelta(hours=9))
 
+  m = re.fullmatch(r'([+-])(\d{2})(?::?(\d{2}))?', tz)
   if not m:
     raise argparse.ArgumentTypeError(f"Invalid tz offset: {tz_str}")
 
@@ -36,7 +42,6 @@ def parse_dt(value: str | None, default_tz) -> datetime | None:
 
   try:
     return datetime.fromtimestamp(float(s), tz=timezone.utc)
-
   except ValueError:
     pass
 
@@ -45,10 +50,8 @@ def parse_dt(value: str | None, default_tz) -> datetime | None:
 
   try:
     dt = datetime.fromisoformat(s)
-
     if dt.tzinfo is None:
       dt = dt.replace(tzinfo=default_tz)
     return dt.astimezone(timezone.utc)
-
   except Exception as e:
     raise argparse.ArgumentTypeError(f"Invalid datetime: {value}") from e
