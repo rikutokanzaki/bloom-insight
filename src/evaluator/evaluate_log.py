@@ -4,6 +4,7 @@ from pathlib import Path
 from collections import defaultdict, OrderedDict
 from typing import IO
 from datetime import datetime, timezone
+import bisect
 
 class LogEvaluator:
   def __init__(self, log_file: str, mode_key: str = "spring_mode", base_log_dir: str | None = None, encoding: str = "utf-8", errors: str = "replace"):
@@ -64,6 +65,27 @@ class LogEvaluator:
         pass
 
     return None
+
+  def _parse_access_obj_epoch(self, obj: dict) -> float | None:
+    msec = obj.get("msec")
+    if isinstance(msec, str) and msec:
+      try:
+        return float(msec)
+      except ValueError:
+        pass
+    dt = self._parse_obj_time(obj)
+    return dt.timestamp() if dt else None
+
+  def _parse_session_timestamp_epoch(self, ts: str) -> float | None:
+    try:
+      dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+    except ValueError:
+      try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+      except ValueError:
+        return None
+    dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
   def classify_by_mode(
       self,
@@ -179,3 +201,140 @@ class LogEvaluator:
     if bucket == "day":
       return { m: dict(dmap) for m, dmap in counts.items() }
     return dict(counts)
+
+  def annotate_and_save_sessions(
+      self,
+      session_file: str,
+      time_tolerance: float = 1.0,
+      out_file_name: str = "log_session.json",
+      bucket: str = "none",
+      bucket_tz = timezone.utc
+    ) -> dict:
+    """
+    access.logのタイムスタンプに近いセッションへmodeを付与し、
+    ./log/<mode>/<out_file_name> に追記保存する。
+    戻り値:
+      - bucket=='none': { mode: { 'usernames': 合計, 'passwords': 合計 } }
+      - bucket=='day' : { mode: { 'YYYY-MM-DD': { 'usernames': 合計, 'passwords': 合計 } } }
+    """
+    if bucket not in ("none", "day"):
+      raise ValueError("bucket must be 'none' or 'day'")
+
+    access_epochs: list[float] = []
+    access_modes: list[str] = []
+    with open(self.log_file, "rb") as f:
+      for raw in f:
+        line = raw.decode(self.encoding, errors=self.errors).strip()
+        if not line:
+          continue
+        line = self._fix_json_line(line)
+        try:
+          obj = json.loads(line)
+        except json.JSONDecodeError:
+          continue
+
+        epoch = self._parse_access_obj_epoch(obj)
+        if epoch is None:
+          continue
+
+        mode_value = obj.get(self.mode_key, "")
+        if not mode_value:
+          proxy_host = str(obj.get("proxy_host", ""))
+          if "launcher" in proxy_host:
+            mode_value = "launcher"
+        mode = self._sanitize_mode(mode_value)
+
+        access_epochs.append(epoch)
+        access_modes.append(mode)
+
+    paired = sorted(zip(access_epochs, access_modes), key=lambda x: x[0])
+    access_epochs = [p[0] for p in paired]
+    access_modes = [p[1] for p in paired]
+
+    def find_mode_for_epoch(epoch: float) -> str:
+      if not access_epochs:
+        return "unknown"
+      pos = bisect.bisect_left(access_epochs, epoch)
+      cand_idx = []
+      if pos < len(access_epochs):
+        cand_idx.append(pos)
+      if pos > 0:
+        cand_idx.append(pos - 1)
+
+      best = ("unknown", None)
+      for i in cand_idx:
+        diff = abs(access_epochs[i] - epoch)
+        if diff <= time_tolerance and (best[1] is None or diff < best[1]):
+          best = (access_modes[i], diff)
+      return best[0]
+
+    writers: dict[str, IO] = {}
+    if bucket == "day":
+      counts: dict[str, dict[str, dict[str, int]] ] = {}
+    else:
+      counts: dict[str, dict[str, int]] = {}
+
+    def get_writer(mode: str) -> IO:
+      if mode in writers:
+        return writers[mode]
+      mode_dir = self.base_log_dir / mode
+      mode_dir.mkdir(parents=True, exist_ok=True)
+      out_path = mode_dir / out_file_name
+      fh = open(out_path, "a", encoding="utf-8", newline="\n")
+      writers[mode] = fh
+      return fh
+
+    try:
+      with open(session_file, "r", encoding="utf-8", errors="replace") as sf:
+        for line in sf:
+          line = line.strip()
+          if not line:
+            continue
+          try:
+            obj = json.loads(line)
+          except json.JSONDecodeError:
+            continue
+
+          ts_str = obj.get("timestamp")
+          epoch = self._parse_session_timestamp_epoch(ts_str) if ts_str else None
+          mode = find_mode_for_epoch(epoch) if epoch is not None else "unknown"
+          obj["mode"] = mode
+
+          attempts = obj.get("auth_attempts") or []
+          u_cnt = 0
+          p_cnt = 0
+          for a in attempts:
+            if isinstance(a, dict):
+              if a.get("username"):
+                u_cnt += 1
+              if a.get("password"):
+                p_cnt += 1
+
+          if bucket == "day":
+            if epoch is not None:
+              day_key = datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(bucket_tz).strftime("%Y-%m-%d")
+            else:
+              day_key = "unknown-date"
+            if mode not in counts:
+              counts[mode] = {}
+            if day_key not in counts[mode]:
+              counts[mode][day_key] = {"usernames": 0, "passwords": 0}
+            counts[mode][day_key]["usernames"] += u_cnt
+            counts[mode][day_key]["passwords"] += p_cnt
+          else:
+            if mode not in counts:
+              counts[mode] = {"usernames": 0, "passwords": 0}
+            counts[mode]["usernames"] += u_cnt
+            counts[mode]["passwords"] += p_cnt
+
+          fh = get_writer(mode)
+          fh.write(json.dumps(obj, ensure_ascii=False))
+          fh.write("\n")
+    finally:
+      for fh in writers.values():
+        try:
+          fh.close()
+        except Exception:
+          pass
+
+    return counts
