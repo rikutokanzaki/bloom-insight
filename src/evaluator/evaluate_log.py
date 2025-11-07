@@ -37,10 +37,13 @@ class LogEvaluator:
 
   def _parse_obj_time(self, obj: dict) -> datetime | None:
     t = obj.get("time_iso8601")
+
     if isinstance(t, str) and t:
       s = t.strip()
+
       if s.endswith("Z"):
         s = s[:-1] + "+00:00"
+
       try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -58,6 +61,7 @@ class LogEvaluator:
         pass
 
     t = obj.get("msec")
+
     if isinstance(t, str) and t:
       try:
         return datetime.fromtimestamp(float(t), tz=timezone.utc)
@@ -73,6 +77,7 @@ class LogEvaluator:
         return float(msec)
       except ValueError:
         pass
+
     dt = self._parse_obj_time(obj)
     return dt.timestamp() if dt else None
 
@@ -84,6 +89,7 @@ class LogEvaluator:
         dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
       except ValueError:
         return None
+
     dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
 
@@ -97,6 +103,7 @@ class LogEvaluator:
       bucket: str = "none",
       bucket_tz = None
     ):
+
     if count_policy not in ("uri", "all"):
       raise ValueError("count_policy must be 'uri' or 'all'")
     if bucket not in ("none", "day"):
@@ -127,8 +134,10 @@ class LogEvaluator:
       initialized_modes.add(mode)
 
       writers[mode] = fh
+
       if max_open_files and len(writers) > max_open_files:
         evict_mode, evict_fh = writers.popitem(last=False)
+
         try:
           evict_fh.close()
         except Exception:
@@ -150,6 +159,7 @@ class LogEvaluator:
             continue
 
           ts = self._parse_obj_time(obj)
+
           if start or end:
             if ts is None:
               continue
@@ -210,24 +220,21 @@ class LogEvaluator:
       bucket: str = "none",
       bucket_tz = timezone.utc
     ) -> dict:
-    """
-    access.logのタイムスタンプに近いセッションへmodeを付与し、
-    ./log/<mode>/<out_file_name> に追記保存する。
-    戻り値:
-      - bucket=='none': { mode: { 'usernames': 合計, 'passwords': 合計 } }
-      - bucket=='day' : { mode: { 'YYYY-MM-DD': { 'usernames': 合計, 'passwords': 合計 } } }
-    """
+
     if bucket not in ("none", "day"):
       raise ValueError("bucket must be 'none' or 'day'")
 
     access_epochs: list[float] = []
     access_modes: list[str] = []
+
     with open(self.log_file, "rb") as f:
       for raw in f:
         line = raw.decode(self.encoding, errors=self.errors).strip()
+
         if not line:
           continue
         line = self._fix_json_line(line)
+
         try:
           obj = json.loads(line)
         except json.JSONDecodeError:
@@ -242,6 +249,7 @@ class LogEvaluator:
           proxy_host = str(obj.get("proxy_host", ""))
           if "launcher" in proxy_host:
             mode_value = "launcher"
+
         mode = self._sanitize_mode(mode_value)
 
         access_epochs.append(epoch)
@@ -254,21 +262,26 @@ class LogEvaluator:
     def find_mode_for_epoch(epoch: float) -> str:
       if not access_epochs:
         return "unknown"
+
       pos = bisect.bisect_left(access_epochs, epoch)
       cand_idx = []
+
       if pos < len(access_epochs):
         cand_idx.append(pos)
       if pos > 0:
         cand_idx.append(pos - 1)
 
       best = ("unknown", None)
+
       for i in cand_idx:
         diff = abs(access_epochs[i] - epoch)
         if diff <= time_tolerance and (best[1] is None or diff < best[1]):
           best = (access_modes[i], diff)
+
       return best[0]
 
     writers: dict[str, IO] = {}
+
     if bucket == "day":
       counts: dict[str, dict[str, dict[str, int]] ] = {}
     else:
@@ -277,19 +290,23 @@ class LogEvaluator:
     def get_writer(mode: str) -> IO:
       if mode in writers:
         return writers[mode]
+
       mode_dir = self.base_log_dir / mode
       mode_dir.mkdir(parents=True, exist_ok=True)
       out_path = mode_dir / out_file_name
       fh = open(out_path, "a", encoding="utf-8", newline="\n")
       writers[mode] = fh
+
       return fh
 
     try:
       with open(session_file, "r", encoding="utf-8", errors="replace") as sf:
         for line in sf:
           line = line.strip()
+
           if not line:
             continue
+
           try:
             obj = json.loads(line)
           except json.JSONDecodeError:
@@ -303,6 +320,7 @@ class LogEvaluator:
           attempts = obj.get("auth_attempts") or []
           u_cnt = 0
           p_cnt = 0
+
           for a in attempts:
             if isinstance(a, dict):
               if a.get("username"):
@@ -315,12 +333,15 @@ class LogEvaluator:
               day_key = datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(bucket_tz).strftime("%Y-%m-%d")
             else:
               day_key = "unknown-date"
+
             if mode not in counts:
               counts[mode] = {}
+
             if day_key not in counts[mode]:
               counts[mode][day_key] = {"usernames": 0, "passwords": 0}
             counts[mode][day_key]["usernames"] += u_cnt
             counts[mode][day_key]["passwords"] += p_cnt
+
           else:
             if mode not in counts:
               counts[mode] = {"usernames": 0, "passwords": 0}
@@ -330,6 +351,7 @@ class LogEvaluator:
           fh = get_writer(mode)
           fh.write(json.dumps(obj, ensure_ascii=False))
           fh.write("\n")
+
     finally:
       for fh in writers.values():
         try:
