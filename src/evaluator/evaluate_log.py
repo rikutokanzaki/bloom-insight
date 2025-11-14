@@ -283,7 +283,7 @@ class LogEvaluator:
     writers: dict[str, IO] = {}
 
     if bucket == "day":
-      counts: dict[str, dict[str, dict[str, int]] ] = {}
+      counts: dict[str, dict[str, dict[str, int]]] = {}
     else:
       counts: dict[str, dict[str, int]] = {}
 
@@ -320,13 +320,19 @@ class LogEvaluator:
           attempts = obj.get("auth_attempts") or []
           u_cnt = 0
           p_cnt = 0
+          t_cnt = 0
 
           for a in attempts:
-            if isinstance(a, dict):
-              if a.get("username"):
-                u_cnt += 1
-              if a.get("password"):
-                p_cnt += 1
+            if not isinstance(a, dict):
+              continue
+            has_u = "username" in a
+            has_p = "password" in a
+            if has_u:
+              u_cnt += 1
+            if has_p:
+              p_cnt += 1
+            if has_u or has_p:
+              t_cnt += 1
 
           if bucket == "day":
             if epoch is not None:
@@ -338,15 +344,17 @@ class LogEvaluator:
               counts[mode] = {}
 
             if day_key not in counts[mode]:
-              counts[mode][day_key] = {"usernames": 0, "passwords": 0}
+              counts[mode][day_key] = {"usernames": 0, "passwords": 0, "auth_total": 0}
             counts[mode][day_key]["usernames"] += u_cnt
             counts[mode][day_key]["passwords"] += p_cnt
+            counts[mode][day_key]["auth_total"] += t_cnt
 
           else:
             if mode not in counts:
-              counts[mode] = {"usernames": 0, "passwords": 0}
+              counts[mode] = {"usernames": 0, "passwords": 0, "auth_total": 0}
             counts[mode]["usernames"] += u_cnt
             counts[mode]["passwords"] += p_cnt
+            counts[mode]["auth_total"] += t_cnt
 
           fh = get_writer(mode)
           fh.write(json.dumps(obj, ensure_ascii=False))

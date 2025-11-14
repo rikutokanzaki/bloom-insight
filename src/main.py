@@ -180,29 +180,33 @@ def main():
         for m in sorted(session_counts.keys(), key=_mode_sort_key):
           u = session_counts[m].get(day, {}).get("usernames", 0)
           p = session_counts[m].get(day, {}).get("passwords", 0)
+          a = session_counts[m].get(day, {}).get("auth_total", 0)
 
-          if u or p:
-            modes_today.append((m, u, p))
+          if u or p or a:
+            modes_today.append((m, u, p, a))
 
             if m not in totals_by_mode:
-              totals_by_mode[m] = {"usernames": 0, "passwords": 0}
+              totals_by_mode[m] = {"usernames": 0, "passwords": 0, "auth_total": 0}
             totals_by_mode[m]["usernames"] += u
             totals_by_mode[m]["passwords"] += p
+            totals_by_mode[m]["auth_total"] += a
 
-        sum_u = sum(u for _, u, _ in modes_today)
-        sum_p = sum(p for _, _, p in modes_today)
+        sum_u = sum(u for _, u, _, _ in modes_today)
+        sum_p = sum(p for _, _, p, _ in modes_today)
+        sum_a = sum(a for _, _, _, a in modes_today)
 
-        for m, u, p in modes_today:
-          print(f"{m}: usernames={u} passwords={p}")
+        for m, u, p, a in modes_today:
+          print(f"{m}: usernames={u} passwords={p} auth_total={a}")
 
-        print(f"sum: usernames={sum_u} passwords={sum_p}")
+        print(f"sum: usernames={sum_u} passwords={sum_p} auth_total={sum_a}")
         print("")
       print("--session sum--")
 
       for m in sorted(totals_by_mode.keys(), key=_mode_sort_key):
         u = totals_by_mode[m]["usernames"]
         p = totals_by_mode[m]["passwords"]
-        print(f"{m}: usernames={u} passwords={p}")
+        a = totals_by_mode[m]["auth_total"]
+        print(f"{m}: usernames={u} passwords={p} auth_total={a}")
 
     else:
       session_counts = evaluator.annotate_and_save_sessions(
@@ -216,7 +220,8 @@ def main():
       for mode in sorted(session_counts.keys(), key=_mode_sort_key):
         u = session_counts[mode]["usernames"]
         p = session_counts[mode]["passwords"]
-        print(f"{mode}: usernames={u} passwords={p}")
+        a = session_counts[mode]["auth_total"]
+        print(f"{mode}: usernames={u} passwords={p} auth_total={a}")
 
 if __name__ == "__main__":
   main()
