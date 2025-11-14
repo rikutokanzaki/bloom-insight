@@ -6,8 +6,8 @@ import os
 from analyzer import display_burst
 
 base_path = Path(__file__).resolve()
-openresty_log_file = os.path.join(base_path.parents[1], "log", "raw", "access.log")
-heralding_log_file = os.path.join(base_path.parents[1], "log", "raw", "log_session.json")
+openresty_log_file = os.path.join(base_path.parents[1], "log", "raw", "openresty", "access.log")
+heralding_log_file = os.path.join(base_path.parents[1], "log", "raw", "heralding", "log_session.json")
 default_burst_out_dir = os.path.join(base_path.parents[1], "log", "bursts")
 
 def _mode_sort_key(name: str) -> tuple[int, str]:

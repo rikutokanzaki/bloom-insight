@@ -10,7 +10,7 @@ class LogEvaluator:
   def __init__(self, log_file: str, mode_key: str = "spring_mode", base_log_dir: str | None = None, encoding: str = "utf-8", errors: str = "replace"):
     self.log_file = Path(log_file)
     self.mode_key = mode_key
-    self.base_log_dir = Path(base_log_dir) if base_log_dir else self.log_file.parent.parent
+    self.base_log_dir = Path(base_log_dir) if base_log_dir else self.log_file.parents[2]
     self.encoding = encoding
     self.errors = errors
 
