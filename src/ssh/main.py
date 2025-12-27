@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    log_file_path = Path(__file__).parents[2] / 'log' / 'tsubomi' / 'paramiko.log'
+    log_file_path = Path(__file__).parents[2] / 'log' / 'raw' / 'paramiko' / 'paramiko.log'
 
     if not log_file_path.exists():
         logger.error(f"Log file not found: {log_file_path}")
