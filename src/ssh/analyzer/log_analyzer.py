@@ -13,6 +13,8 @@ class ParamikoLogAnalyzer:
         self.daily_stats: Dict[str, Dict[str, Dict]] = defaultdict(
             lambda: defaultdict(lambda: {
                 'credentials': set(),
+                'username_records': 0,
+                'password_records': 0,
                 'commands': []
             })
         )
@@ -66,25 +68,39 @@ class ParamikoLogAnalyzer:
         username = log_entry.get('username')
         password = log_entry.get('password')
 
+        stats = self.daily_stats[date][mode]
+
+        if username:
+            stats['username_records'] += 1
+
+        if password:
+            stats['password_records'] += 1
+
         if username and password:
             credential = (username, password)
-            self.daily_stats[date][mode]['credentials'].add(credential)
+            stats['credentials'].add(credential)
 
     def _process_command(self, log_entry: Dict, date: str, mode: str) -> None:
         command = log_entry.get('command')
         if command:
             self.daily_stats[date][mode]['commands'].append(command)
 
-    def get_daily_statistics(self) -> Dict[str, Dict[str, Dict[str, int]]]:
+    def get_daily_statistics(self) -> Dict[str, Dict[str,Dict[str,int]]]:
         result = {}
+
         for date in sorted(self.daily_stats.keys()):
             result[date] = {}
+
             for mode in sorted(self.daily_stats[date].keys()):
                 stats = self.daily_stats[date][mode]
+
                 result[date][mode] = {
                     'credentials_count': len(stats['credentials']),
+                    'username_records': stats['username_records'],
+                    'password_records': stats['password_records'],
                     'commands_count': len(stats['commands'])
                 }
+
         return result
 
     def get_detailed_statistics(self) -> Dict[str, Dict[str, Dict]]:
@@ -95,8 +111,13 @@ class ParamikoLogAnalyzer:
                 stats = self.daily_stats[date][mode]
                 result[date][mode] = {
                     'credentials_count': len(stats['credentials']),
+                    'username_records': stats['username_records'],
+                    'password_records': stats['password_records'],
                     'credentials': [
-                        {'username': cred[0], 'password': cred[1]}
+                        {
+                            'username': cred[0],
+                            'password': cred[1]
+                        }
                         for cred in sorted(stats['credentials'])
                     ],
                     'commands_count': len(stats['commands']),
@@ -105,17 +126,28 @@ class ParamikoLogAnalyzer:
         return result
 
     def get_mode_summary(self) -> Dict[str, Dict[str, int]]:
-        mode_summary = defaultdict(lambda: {'credentials': set(), 'commands_count': 0})
+        mode_summary = defaultdict(
+            lambda: {
+                'credentials': set(),
+                'username_records': 0,
+                'password_records': 0,
+                'commands_count': 0
+            }
+        )
 
         for date_stats in self.daily_stats.values():
             for mode, stats in date_stats.items():
                 mode_summary[mode]['credentials'].update(stats['credentials'])
+                mode_summary[mode]['username_records'] += stats['username_records']
+                mode_summary[mode]['password_records'] += stats['password_records']
                 mode_summary[mode]['commands_count'] += len(stats['commands'])
 
         result = {}
         for mode in sorted(mode_summary.keys()):
             result[mode] = {
                 'total_credentials': len(mode_summary[mode]['credentials']),
+                'total_username_records': mode_summary[mode]['username_records'],
+                'total_password_records': mode_summary[mode]['password_records'],
                 'total_commands': mode_summary[mode]['commands_count']
             }
         return result
